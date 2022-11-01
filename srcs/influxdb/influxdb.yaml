@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: influxdb-pvc
+  labels:
+    app: influxdb
+spec:
+  resources:
+    requests:
+      storage: 800Mi
+  accessModes:
+  - ReadWriteOnce
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: influxdb-deployment
+  labels:
+    app: influxdb
+spec:
+  selector:
+    matchLabels:
+      app: influxdb
+  template:
+    metadata:
+      labels:
+        app: influxdb
+    spec:
+      containers:
+      - name: influxdb
+        image: influxdb-local-image
+        imagePullPolicy: Never
+        livenessProbe:
+          exec:
+            command:
+            - bin/sh
+            - -c
+            - pgrep influxd && pgrep telegraf
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        ports:
+        - name: influxdb-port
+          containerPort: 8086
+        volumeMounts:
+        - name: influxdb-data
+          mountPath: /root
+        - name: telegraf
+          mountPath: /etc/telegraf
+      volumes:
+      - name: influxdb-data
+        persistentVolumeClaim:
+          claimName: influxdb-pvc
+      - name: telegraf
+        configMap:
+          name: influxdb-config
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: influxdb-config
+data:
+  telegraf.conf: |
+    [global_tags]
+    [agent]
+      interval = "10s"
+      round_interval = true
+      metric_batch_size = 1000
+      metric_buffer_limit = 10000
+      collection_jitter = "0s"
+      flush_interval = "10s"
+      flush_jitter = "0s"
+      precision = ""
+      hostname = ""
+      omit_hostname = false
+    [[outputs.influxdb]]
+      urls = ["http://localhost:8086"]
+      database = "ft_services"
+      ## HTTP Basic Auth
+      username = "influxdb_admin"
+      password = "influxdb_pw"
+    [[inputs.cpu]]
+      percpu = true
+      totalcpu = true
+      collect_cpu_time = false
+      report_active = false
+    [[inputs.disk]]
+      ignore_fs = ["tmpfs", "devtmpfs", "devfs", "iso9660", "overlay", "aufs", "squashfs"]
+    [[inputs.diskio]]
+    [[inputs.kernel]]
+    [[inputs.mem]]
+    [[inputs.processes]]
+    [[inputs.swap]]
+    [[inputs.system]]
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: influxdb-service
+spec:
+  selector:
+    app: influxdb
+  ports:
+  - port: 8086
+    targetPort: influxdb-port

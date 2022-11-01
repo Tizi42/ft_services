@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-deployment
+  labels:
+    app: grafana
+spec:
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana-local-image
+        imagePullPolicy: Never
+        livenessProbe:
+          exec:
+            command:
+            - bin/sh
+            - -c
+            - pgrep grafana-server && pgrep telegraf
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        ports:
+        - name: grafana-port
+          containerPort: 3000
+        volumeMounts:
+        - name: dashboard
+          mountPath: /usr/share/grafana/conf/provisioning/dashboards
+        - name: datasource
+          mountPath: /usr/share/grafana/conf/provisioning/datasources
+        - name: telegraf
+          mountPath: /etc/telegraf
+      volumes:
+      - name: dashboard
+        configMap:
+          name: grafana-config
+          items:
+            - key: dashboard.yaml
+              path: dashboard.yaml
+      - name: datasource
+        configMap:
+          name: grafana-config
+          items:
+            - key: datasource.yaml
+              path: datasource.yaml
+      - name: telegraf
+        configMap:
+          name: telegraf-config
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+data:
+  dashboard.yaml: |
+    apiVersion: 1
+    providers:
+     - name: 'influxDB-Services'
+       orgId: 1
+       folder: ''
+       folderUid: ''
+       type: file
+       options:
+         path: /var/lib/grafana/dashboards
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+     - name: influxDB-Services
+       type: influxdb
+       access: proxy
+       url: http://influxdb-service:8086
+       database: ft_services
+       user: influxdb_admin
+       password: influxdb_pw
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-service
+  annotations:
+    metallb.universe.tf/allow-shared-ip: entry-point
+spec:
+  selector:
+    app: grafana
+  ports:
+  - port: 3000
+    targetPort: grafana-port
+  type: LoadBalancer

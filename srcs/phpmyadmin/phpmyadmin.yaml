@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phpmyadmin-deployment
+  labels:
+    app: phpmyadmin
+spec:
+  selector:
+    matchLabels:
+      app: phpmyadmin
+  template:
+    metadata:
+      labels:
+        app: phpmyadmin
+    spec:
+      containers:
+      - name: phpmyadmin
+        image: phpmyadmin-local-image
+        imagePullPolicy: Never
+        livenessProbe:
+          exec:
+            command:
+            - bin/sh
+            - -c
+            - pgrep php && pgrep telegraf
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        ports:
+        - name: phpmyadmin-port
+          containerPort: 5000
+        volumeMounts:
+          - name: pma-server-volume
+            mountPath: /etc/nginx/http.d
+          - name: pma-conf
+            mountPath: /etc/phpmyadmin
+          - name: telegraf
+            mountPath: /etc/telegraf
+      volumes:
+        - name: pma-server-volume
+          configMap:
+            name: phpmyadmin-config
+            items:
+              - key: pma_server.conf
+                path: pma_server.conf
+        - name: pma-conf
+          configMap:
+            name: phpmyadmin-config
+            items:
+              - key: config.inc.php
+                path: config.inc.php
+        - name: telegraf
+          configMap:
+            name: telegraf-config
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phpmyadmin-config
+data:
+  config.inc.php: |
+    <?php
+    declare(strict_types=1);
+    $cfg['blowfish_secret'] = '4=rb=eNfYtcmtoAM/2{iR3YZHks9QwlS'; /* YOU MUST FILL IN THIS FOR COOKIE AUTH! */
+    $i = 0;
+    $i++;
+    /* Authentication type */
+    $cfg['Servers'][$i]['auth_type'] = 'cookie';
+    /* Server parameters */
+    $cfg['Servers'][$i]['host'] = 'mysql-service';
+    $cfg['Servers'][$i]['compress'] = false;
+    $cfg['Servers'][$i]['AllowNoPassword'] = false;
+    /* Fix index.php favicon.ico 404 problem */
+    $cfg['PmaAbsoluteUri'] = './';
+  pma_server.conf: |
+    server {
+    	listen 5000 ssl;
+
+    	root /usr/share/webapps/phpmyadmin/;
+    	index index.php;
+    	server_name localhost;
+
+    	access_log /var/log/nginx/pma_access.log;
+    	error_log /var/log/nginx/pma_error.log;
+
+        ssl_certificate /opt/server.pem;
+        ssl_certificate_key /opt/server.pem;
+
+    	location / {
+    		try_files $uri $uri/ /index.php?$args;
+    		}
+
+    	location ~ \.php$ {
+    		try_files $uri =404;
+    		include /etc/nginx/fastcgi_params;
+    		fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    		fastcgi_pass 127.0.0.1:9000;
+    		fastcgi_index index.php;
+    		}
+    	}
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: phpmyadmin-service
+  annotations:
+    metallb.universe.tf/allow-shared-ip: entry-point
+spec:
+  selector:
+    app: phpmyadmin
+  ports:
+  - port: 5000
+    targetPort: phpmyadmin-port
+  type: LoadBalancer

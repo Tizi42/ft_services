@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ftps-deployment
+  labels:
+    app: ftps
+spec:
+  selector:
+    matchLabels:
+      app: ftps
+  template:
+    metadata:
+      labels:
+        app: ftps
+    spec:
+      containers:
+      - name: ftps
+        image: ftps-local-image
+        imagePullPolicy: Never
+        livenessProbe:
+          exec:
+            command:
+            - bin/sh
+            - -c
+            - pgrep vsftpd && pgrep telegraf
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        ports:
+        - name: ftps-port
+          containerPort: 21
+        - name: ftps-passive
+          containerPort: 32000
+        - name: ftps-active
+          containerPort: 20
+        volumeMounts:
+          - name: ftps-config-volume
+            mountPath: /etc/vsftpd
+          - name: telegraf
+            mountPath: /etc/telegraf
+      volumes:
+        - name: ftps-config-volume
+          configMap:
+            name: ftps-config
+        - name: telegraf
+          configMap:
+            name: telegraf-config
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ftps-config
+data:
+  my-vsftpd.conf: |
+    #seccomp_sandbox need to be set to NO to avoid child died problem on Ubuntu
+    seccomp_sandbox=NO
+    #enable ssl
+    ssl_enable=YES
+    rsa_cert_file=/opt/vsftpd.pem
+    rsa_private_key_file=/opt/vsftpd.pem
+    #config access
+    local_enable=YES
+    write_enable=YES
+    anonymous_enable=NO
+    #userlist_deny=NO
+    #userlist_enable=YES
+    userlist_file=/etc/vsftpd.userlist
+    #set passive mode for data transfer
+    #(connecting to the command channel default port: 21)
+    #(active mode data transfer default port: 20)
+    pasv_enable=YES
+    pasv_min_port=32000
+    pasv_max_port=32000
+    #Need to set pasv_address to find a router
+    pasv_address=192.168.49.5
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ftps-service
+  annotations:
+    metallb.universe.tf/allow-shared-ip: entry-point
+spec:
+  selector:
+    app: ftps
+  ports:
+  - port: 21
+    name: ftps-port
+    targetPort: ftps-port
+  - port: 32000
+    name: ftps-passive
+    targetPort: ftps-passive
+  - port: 20
+    name: ftps-active
+    targetPort: ftps-active
+  type: LoadBalancer

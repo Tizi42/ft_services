@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress-deployment
+  labels:
+    app: wordpress
+spec:
+  selector:
+    matchLabels:
+      app: wordpress
+  template:
+    metadata:
+      labels:
+        app: wordpress
+    spec:
+      containers:
+      - name: wordpress
+        image: wordpress-local-image
+        imagePullPolicy: Never
+        livenessProbe:
+          exec:
+            command:
+            - bin/sh
+            - -c
+            - pgrep php && pgrep telegraf
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        ports:
+        - name: wordpress-port
+          containerPort: 5050
+        volumeMounts:
+          - name: wp-server-volume
+            mountPath: /etc/nginx/http.d
+          - name: wp-conf
+            mountPath: /wordpress/wp-config.php
+            subPath: wp-config.php
+          - name: telegraf
+            mountPath: /etc/telegraf
+      volumes:
+        - name: wp-server-volume
+          configMap:
+            name: wordpress-config
+            items:
+              - key: wp_server.conf
+                path: wp_server.conf
+        - name: wp-conf
+          configMap:
+            name: wordpress-config
+            items:
+              - key: wp-config.php
+                path: wp-config.php
+        - name: telegraf
+          configMap:
+            name: telegraf-config
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wordpress-config
+data:
+  wp-config.php: |
+    <?php
+    define( 'DB_NAME', 'wpdb' );
+    define( 'DB_USER', 'wpdb_admin' );
+    define( 'DB_PASSWORD', 'wpdb_pw' );
+    define( 'DB_HOST', 'mysql-service' );
+    define( 'DB_CHARSET', 'utf8' );
+    define( 'DB_COLLATE', '' );
+
+    define( 'AUTH_KEY',         'put your unique phrase here' );
+    define( 'SECURE_AUTH_KEY',  'put your unique phrase here' );
+    define( 'LOGGED_IN_KEY',    'put your unique phrase here' );
+    define( 'NONCE_KEY',        'put your unique phrase here' );
+    define( 'AUTH_SALT',        'put your unique phrase here' );
+    define( 'SECURE_AUTH_SALT', 'put your unique phrase here' );
+    define( 'LOGGED_IN_SALT',   'put your unique phrase here' );
+    define( 'NONCE_SALT',       'put your unique phrase here' );
+
+    $table_prefix = 'wp_';
+    define( 'WP_DEBUG', false );
+    if ( ! defined( 'ABSPATH' ) ) {
+            define( 'ABSPATH', __DIR__ . '/' );
+    }
+    require_once ABSPATH . 'wp-settings.php';
+  wp_server.conf: |
+    server {
+    	listen 5050 ssl;
+
+    	root /wordpress;
+    	index index.php;
+    	server_name localhost;
+
+    	access_log /var/log/nginx/wordpress_access.log;
+    	error_log /var/log/nginx/wordpress_error.log;
+
+        ssl_certificate /opt/server.pem;
+        ssl_certificate_key /opt/server.pem;
+
+    	location / {
+    		try_files $uri $uri/ /index.php?$args;
+    		}
+
+    	location ~ \.php$ {
+    		try_files $uri =404;
+    		include /etc/nginx/fastcgi_params;
+    		fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    		fastcgi_pass 127.0.0.1:9000;
+    		fastcgi_index index.php;
+    		}
+    	}
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-service
+  annotations:
+    metallb.universe.tf/allow-shared-ip: entry-point
+spec:
+  selector:
+    app: wordpress
+  ports:
+  - port: 5050
+    targetPort: wordpress-port
+  type: LoadBalancer
